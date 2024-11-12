@@ -2,84 +2,158 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <array>
+#include <vector>
+#include <cstdlib>
+#include <ctime>
 
-// Classe TicTacToe
 class TicTacToe {
-private:
-    std::array<std::array<char, 3>, 3> board; // Tabuleiro do jogo
-    std::mutex board_mutex; // Mutex para controle de acesso ao tabuleiro
-    std::condition_variable turn_cv; // Variável de condição para alternância de turnos
-    char current_player; // Jogador atual ('X' ou 'O')
-    bool game_over; // Estado do jogo
-    char winner; // Vencedor do jogo
-
 public:
-    TicTacToe() {
-        // Inicializar o tabuleiro e as variáveis do jogo
+    TicTacToe() : board(3, std::vector<char>(3, ' ')), currentPlayer('X'), gameEnded(false) {}
+
+    void displayBoard() {
+        std::cout << "Current Board:\n";
+        for (const auto& row : board) {
+            for (const auto& cell : row) {
+                std::cout << (cell == ' ' ? '.' : cell) << " ";
+            }
+            std::cout << "\n";
+        }
+        std::cout << std::endl;
     }
 
-    void display_board() {
-        // Exibir o tabuleiro no console
+    bool makeMove(char player, int row, int col) {
+        std::lock_guard<std::mutex> lock(boardMutex);
+        if (row < 0 || row >= 3 || col < 0 || col >= 3) {
+            std::cout << "Invalid move position: (" << row << ", " << col << ")\n";
+            return false;
+        }
+        if (board[row][col] != ' ') {
+            std::cout << "Position (" << row << ", " << col << ") already occupied.\n";
+            return false;
+        }
+        
+        board[row][col] = player;
+        displayBoard();
+        
+        if (checkWin(player)) {
+            std::cout << "Player " << player << " wins!\n";
+            gameEnded = true;
+            turnCv.notify_all();
+            return true;
+        }
+
+        // Verifica se o tabuleiro está cheio após cada jogada
+        if (isBoardFull()) {
+            std::cout << "Game ended in a draw.\n";
+            gameEnded = true;
+            turnCv.notify_all();
+        }
+
+        togglePlayer(); // Alterna o jogador após uma jogada válida
+        return false;
     }
 
-    bool make_move(char player, int row, int col) {
-        // Implementar a lógica para realizar uma jogada no tabuleiro
-        // Utilizar mutex para controle de acesso
-        // Utilizar variável de condição para alternância de turnos
+    bool checkWin(char player) {
+        // Check rows, columns, and diagonals
+        for (int i = 0; i < 3; ++i) {
+            if ((board[i][0] == player && board[i][1] == player && board[i][2] == player) ||
+                (board[0][i] == player && board[1][i] == player && board[2][i] == player)) {
+                return true;
+            }
+        }
+        if ((board[0][0] == player && board[1][1] == player && board[2][2] == player) ||
+            (board[0][2] == player && board[1][1] == player && board[2][0] == player)) {
+            return true;
+        }
+        return false;
     }
 
-    bool check_win(char player) {
-        // Verificar se o jogador atual venceu o jogo
+    bool isBoardFull() {
+        for (const auto& row : board) {
+            for (const auto& cell : row) {
+                if (cell == ' ') {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
-    bool check_draw() {
-        // Verificar se houve um empate
+    bool isGameOver() {
+        std::lock_guard<std::mutex> lock(boardMutex);
+        return gameEnded;
     }
 
-    bool is_game_over() {
-        // Retornar se o jogo terminou
+    void togglePlayer() {
+        currentPlayer = (currentPlayer == 'X') ? 'O' : 'X';
+        turnCv.notify_all(); // Notifica para que o próximo jogador saiba que é a sua vez
     }
 
-    char get_winner() {
-        // Retornar o vencedor do jogo ('X', 'O', ou 'D' para empate)
+    char getCurrentPlayer() const { return currentPlayer; }
+
+    void waitForTurn(char player) {
+        std::unique_lock<std::mutex> lock(turnMutex);
+        turnCv.wait(lock, [&] { return currentPlayer == player || gameEnded; });
     }
+
+private:
+    std::vector<std::vector<char>> board;
+    char currentPlayer;
+    bool gameEnded;
+    mutable std::mutex boardMutex;
+    std::mutex turnMutex;
+    std::condition_variable turnCv;
 };
 
-// Classe Player
 class Player {
-private:
-    TicTacToe& game; // Referência para o jogo
-    char symbol; // Símbolo do jogador ('X' ou 'O')
-    std::string strategy; // Estratégia do jogador
-
 public:
-    Player(TicTacToe& g, char s, std::string strat) 
-        : game(g), symbol(s), strategy(strat) {}
+    Player(TicTacToe& game, char symbol) : game(game), symbol(symbol) {}
 
-    void play() {
-        // Executar jogadas de acordo com a estratégia escolhida
+    void playSequential() {
+        for (int i = 0; i < 3 && !game.isGameOver(); ++i) {
+            for (int j = 0; j < 3 && !game.isGameOver(); ++j) {
+                game.waitForTurn(symbol);
+                if (game.isGameOver()) return;
+
+                std::cout << "Player " << symbol << " attempting move at " << i << ", " << j << std::endl;
+                if (game.makeMove(symbol, i, j)) return;
+            }
+        }
+    }
+
+    void playRandom() {
+        std::srand(std::time(nullptr));
+        while (!game.isGameOver()) {
+            game.waitForTurn(symbol);
+            if (game.isGameOver()) return;
+
+            int row = std::rand() % 3;
+            int col = std::rand() % 3;
+
+            std::cout << "Player " << symbol << " attempting random move at " << row << ", " << col << std::endl;
+            if (game.makeMove(symbol, row, col)) return;
+        }
     }
 
 private:
-    void play_sequential() {
-        // Implementar a estratégia sequencial de jogadas
-    }
-
-    void play_random() {
-        // Implementar a estratégia aleatória de jogadas
-    }
+    TicTacToe& game;
+    char symbol;
 };
 
-// Função principal
 int main() {
-    // Inicializar o jogo e os jogadores
+    TicTacToe game;
+    Player playerX(game, 'X');
+    Player playerO(game, 'O');
 
-    // Criar as threads para os jogadores
+    std::thread t1(&Player::playSequential, &playerX);
+    std::thread t2(&Player::playRandom, &playerO);
 
-    // Aguardar o término das threads
+    t1.join();
+    t2.join();
 
-    // Exibir o resultado final do jogo
+    if (!game.isGameOver()) {
+        std::cout << "Game ended in a draw.\n";
+    }
 
     return 0;
 }
